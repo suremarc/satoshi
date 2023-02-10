@@ -7,7 +7,7 @@ use tokio::{sync::mpsc, time::Instant};
 use tokio_stream::Stream;
 
 pub enum Message {
-    Blk(Blockchain),
+    Block(Blockchain),
     Txn(u64),
 }
 
@@ -43,15 +43,26 @@ impl Node {
                             txns: std::mem::replace(&mut self.txn_pool, Default::default())
                         });
                         sleep.as_mut().reset(Instant::now() + T_NEXT_BLOCK);
-                        yield Message::Blk(self.current_block.clone());
+                        yield Message::Block(self.current_block.clone());
                     },
                     msg = self.rx.recv() => match msg {
                         // We received a message.
-                        Some(msg) => {
-                            // TODO: handle the message appropriately.
-                            // For now just broadcast it blindly.
-                            yield msg;
+                        Some(Message::Block(block)) => {
+                            if self.current_block.len() < block.len() {
+                                // A longer chain has been received.
+                                // Abandon the current block and start with the new one.
+                                self.current_block = block;
+                                sleep.as_mut().reset(Instant::now() + T_NEXT_BLOCK);
+                            }
                         },
+                        Some(Message::Txn(id)) => {
+                            // For now just broadcast it blindly.
+                            // TODO: verify that the transaction is valid and
+                            // has not been double-spent.
+                            if !self.txn_pool.contains(&id) {
+                                yield Message::Txn(id);
+                            }
+                        }
                         // The channel was closed for some reason.
                         None => return,
                     },
