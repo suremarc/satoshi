@@ -1,6 +1,5 @@
 use std::{
     hash::{Hash, Hasher},
-    pin::Pin,
     sync::atomic::AtomicU64,
     time::Duration,
 };
@@ -9,12 +8,15 @@ use async_stream::stream;
 use nohash_hasher::IntSet;
 use rand::{distributions::Uniform, thread_rng, Rng};
 use rpds::ListSync;
-use tokio::{sync::mpsc, time::Instant};
-use tokio_stream::{Stream, StreamExt, StreamMap};
+use tokio::{
+    sync::broadcast::{self, error::RecvError},
+    time::Instant,
+};
+use tokio_stream::{Stream, StreamExt};
 
 static TXN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {
     Block(Blockchain),
     Txn(u64),
@@ -33,13 +35,13 @@ pub struct Block {
 pub type Blockchain = ListSync<Block>;
 
 pub struct Node {
-    pub rx: mpsc::Receiver<Message>,
+    pub rx: broadcast::Receiver<Message>,
     pub txn_pool: IntSet<u64>,
     pub current_block: Blockchain,
 }
 
 impl Node {
-    pub fn new(rx: mpsc::Receiver<Message>) -> Self {
+    pub fn new(rx: broadcast::Receiver<Message>) -> Self {
         Self {
             rx,
             txn_pool: Default::default(),
@@ -69,9 +71,9 @@ impl Node {
 }
 
 impl Node {
-    pub fn run(&mut self) -> impl Stream<Item = Message> + '_ {
+    pub fn run(mut self) -> impl Stream<Item = Message> {
         stream! {
-            let next_block_sampler = Uniform::new(Duration::ZERO, Duration::from_secs(10));
+            let next_block_sampler = Uniform::new(Duration::ZERO, Duration::from_secs(30));
             let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_millis(10));
 
             let block_timer = tokio::time::sleep(thread_rng().sample(next_block_sampler));
@@ -98,7 +100,7 @@ impl Node {
                     },
                     msg = self.rx.recv() => match msg {
                         // We received a message.
-                        Some(Message::Block(block)) => {
+                        Ok(Message::Block(block)) => {
                             if block.len() > self.current_block.len() && block.first().map_or(true, |blk| self.check_txns(&blk.txns)) {
                                 // A longer chain has been received.
                                 // Abandon the current block and start with the new one.
@@ -106,13 +108,14 @@ impl Node {
                                 block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
                             }
                         },
-                        Some(Message::Txn(id)) => {
+                        Ok(Message::Txn(id)) => {
                             if self.check_txn(id) && self.txn_pool.insert(id) {
                                 yield Message::Txn(id);
                             }
                         }
                         // The channel was closed for some reason.
-                        None => return,
+                        Err(RecvError::Lagged(_)) => continue,
+                        Err(RecvError::Closed) => break,
                     },
                 }
             }
@@ -130,51 +133,54 @@ fn chain_as_hashes(chain: &Blockchain) -> impl Iterator<Item = u64> + '_ {
     })
 }
 
+fn count_txns(chain: &Blockchain) -> usize {
+    chain.iter().map(|block| block.txns.len()).sum()
+}
+
 pub async fn run_net(buf_size: usize, n: usize) {
-    let (txs, mut nodes): (Vec<_>, Vec<_>) = (0..n)
-        .map(|_| mpsc::channel::<Message>(buf_size))
-        .map(|(tx, rx)| (tx, Node::new(rx)))
-        .unzip();
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<Message>(buf_size);
 
-    let streams: Box<[_]> = nodes.iter_mut().map(Node::run).collect();
-    tokio::pin!(streams);
-
-    let mut stream_map: StreamMap<_, _> = streams
-        .iter_mut()
-        // SAFETY: 'streams' is pinned, so every stream inside 'streams' is also pinned.
-        .map(|stream| unsafe { Pin::new_unchecked(stream) })
-        .enumerate()
-        .collect();
+    for _ in 0..n {
+        let tx = tx.clone();
+        let mut stream = Box::pin(Node::new(tx.subscribe()).run());
+        tokio::spawn(async move {
+            while let Some(msg) = stream.next().await {
+                tx.send(msg).unwrap();
+            }
+        });
+    }
 
     let mut longest_chain = Blockchain::new_sync();
-    let mut num_drops = 0;
-    while let Some((stream_idx, ref msg)) = stream_map.next().await {
-        if let Message::Block(blk) = msg {
-            if blk.len() > longest_chain.len() {
-                longest_chain = blk.clone();
-                println!(
-                    "{:x?}",
-                    chain_as_hashes(&longest_chain).take(5).collect::<Vec<_>>()
-                );
-                // for blk in blk.iter() {
-                //     println!("{blk:?}");
-                // }
-                println!(
-                    "{} txns in current block, {num_drops} messages dropped",
-                    longest_chain.first().unwrap().txns.len()
-                );
-                num_drops = 0;
-            }
-        };
+    let mut txns_recorded = 0;
+    let mut txns_submitted = 0;
+    loop {
+        match rx.recv().await {
+            Ok(Message::Block(blk)) => {
+                if blk.len() > longest_chain.len() {
+                    longest_chain = blk.clone();
 
-        // this is probably the wrong way to do this
-        // it's impossible for there to be enough time for the ingress to be processed;
-        // hence, many transactions are dropped if the average txns/sec exceeds capacity
-        for (_, tx) in txs.iter().enumerate().filter(|&(i, _)| i == stream_idx) {
-            num_drops += tx
-                .send_timeout(msg.clone(), Duration::from_micros(0))
-                .await
-                .is_err() as i32;
+                    let new_txns_recorded = count_txns(&longest_chain);
+                    let txns_recorded_since = new_txns_recorded - txns_recorded;
+                    txns_recorded = new_txns_recorded;
+
+                    let new_txns_submitted = TXN_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+                    let txns_submitted_since = new_txns_submitted - txns_submitted;
+                    txns_submitted = new_txns_submitted;
+
+                    println!(
+                        "{:x?}",
+                        chain_as_hashes(&longest_chain).take(5).collect::<Vec<_>>()
+                    );
+                    println!(
+                        "{} txns in current block, {} new txns on chain, {} new txns submitted",
+                        longest_chain.first().unwrap().txns.len(),
+                        txns_recorded_since,
+                        txns_submitted_since,
+                    );
+                }
+            }
+            Err(RecvError::Closed) => break,
+            _ => {}
         }
     }
 }
