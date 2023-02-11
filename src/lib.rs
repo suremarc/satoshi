@@ -7,7 +7,7 @@ use std::{
 
 use async_stream::stream;
 use nohash_hasher::IntSet;
-use rand::{thread_rng, Rng};
+use rand::{distributions::Uniform, thread_rng, Rng};
 use rpds::ListSync;
 use tokio::{sync::mpsc, time::Instant};
 use tokio_stream::{Stream, StreamExt, StreamMap};
@@ -71,27 +71,29 @@ impl Node {
 impl Node {
     pub fn run(&mut self) -> impl Stream<Item = Message> + '_ {
         stream! {
-            const T_NEXT_BLOCK: Duration = Duration::from_secs(1);
-            const T_NEXT_TXN: Duration = Duration::from_secs(10);
+            let next_block_sampler = Uniform::new(Duration::ZERO, Duration::from_secs(10));
+            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_millis(10));
 
-            let block_timer = tokio::time::sleep(T_NEXT_BLOCK+Duration::from_millis(thread_rng().gen_range(0..1_000)));
+            let block_timer = tokio::time::sleep(thread_rng().sample(next_block_sampler));
             tokio::pin!(block_timer);
 
-            let txn_timer = tokio::time::sleep(Duration::from_millis(thread_rng().gen_range(0..1_000)));
+            let txn_timer = tokio::time::sleep(thread_rng().sample(next_txn_sampler));
             tokio::pin!(txn_timer);
 
             loop {
                 tokio::select! {
                     // Sleeping has completed and a block is ready. Publish the block.
                     _ = block_timer.as_mut() => {
+                        // add a new transaction to the pool that represents our reward for the block
+                        self.txn_pool.insert(TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                         self.current_block.push_front_mut(Block {
                             txns: std::mem::replace(&mut self.txn_pool, Default::default())
                         });
-                        block_timer.as_mut().reset(Instant::now() + T_NEXT_BLOCK);
+                        block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
                         yield Message::Block(self.current_block.clone());
                     },
                     _ = txn_timer.as_mut() => {
-                        txn_timer.as_mut().reset(Instant::now() + Duration::from_millis(thread_rng().gen_range(0..1_000)));
+                        txn_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_txn_sampler));
                         yield Message::Txn(TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     },
                     msg = self.rx.recv() => match msg {
@@ -101,12 +103,10 @@ impl Node {
                                 // A longer chain has been received.
                                 // Abandon the current block and start with the new one.
                                 self.current_block = block;
-                                block_timer.as_mut().reset(Instant::now() + T_NEXT_BLOCK + Duration::from_millis(thread_rng().gen_range(0..1_000)));
+                                block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
                             }
                         },
                         Some(Message::Txn(id)) => {
-                            // For now just broadcast it blindly.
-                            // TODO: verify that the transaction is valid and has not been double-spent.
                             if self.check_txn(id) && self.txn_pool.insert(id) {
                                 yield Message::Txn(id);
                             }
@@ -120,16 +120,14 @@ impl Node {
     }
 }
 
-fn print_chain(chain: &Blockchain) {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let hashes: Vec<_> = chain
-        .iter()
-        .map(|block| {
-            block.txns.iter().collect::<Vec<_>>().hash(&mut hasher);
-            hasher.finish()
-        })
-        .collect();
-    println!("{hashes:x?}")
+fn chain_as_hashes(chain: &Blockchain) -> impl Iterator<Item = u64> + '_ {
+    chain.iter().map(|block| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut txns = block.txns.iter().collect::<Vec<_>>();
+        txns.sort();
+        txns.hash(&mut hasher);
+        hasher.finish()
+    })
 }
 
 pub async fn run_net(buf_size: usize, n: usize) {
@@ -149,19 +147,34 @@ pub async fn run_net(buf_size: usize, n: usize) {
         .collect();
 
     let mut longest_chain = Blockchain::new_sync();
+    let mut num_drops = 0;
     while let Some((stream_idx, ref msg)) = stream_map.next().await {
         if let Message::Block(blk) = msg {
             if blk.len() > longest_chain.len() {
                 longest_chain = blk.clone();
-                print_chain(&longest_chain);
+                println!(
+                    "{:x?}",
+                    chain_as_hashes(&longest_chain).take(5).collect::<Vec<_>>()
+                );
+                // for blk in blk.iter() {
+                //     println!("{blk:?}");
+                // }
+                println!(
+                    "{} txns in current block, {num_drops} messages dropped",
+                    longest_chain.first().unwrap().txns.len()
+                );
+                num_drops = 0;
             }
         };
 
         // this is probably the wrong way to do this
         // it's impossible for there to be enough time for the ingress to be processed;
-        // hence, many transactions are dropped
+        // hence, many transactions are dropped if the average txns/sec exceeds capacity
         for (_, tx) in txs.iter().enumerate().filter(|&(i, _)| i == stream_idx) {
-            _ = tx.send_timeout(msg.clone(), Duration::from_micros(0)).await;
+            num_drops += tx
+                .send_timeout(msg.clone(), Duration::from_micros(0))
+                .await
+                .is_err() as i32;
         }
     }
 }
