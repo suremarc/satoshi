@@ -47,6 +47,16 @@ pub fn validate_chain(chain: &Blockchain) -> bool {
     true
 }
 
+pub fn chain_contains(chain: &Blockchain, txn: u64) -> bool {
+    for block in chain {
+        if block.txns.contains(&txn) {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub struct Node {
     pub rx: broadcast::Receiver<Message>,
     pub txn_pool: IntSet<u64>,
@@ -181,6 +191,10 @@ pub async fn run_net(buf_size: usize, n: usize) {
     let mut longest_chain = Blockchain::new_sync();
     let mut txns_recorded = 0;
     let mut txns_submitted = 0;
+    let mut test_txn = TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut test_txn_t_broadcasted = Instant::now();
+    tx.send(Message::Txn(test_txn)).unwrap();
+
     loop {
         match rx.recv().await {
             Ok(Message::Block(blk)) => {
@@ -206,6 +220,18 @@ pub async fn run_net(buf_size: usize, n: usize) {
                         txns_recorded_since,
                         txns_submitted_since,
                     );
+
+                    if chain_contains(&longest_chain, test_txn) {
+                        println!(
+                            "transaction latency: {} seconds",
+                            Instant::now()
+                                .duration_since(test_txn_t_broadcasted)
+                                .as_secs()
+                        );
+                        test_txn = TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        test_txn_t_broadcasted = Instant::now();
+                        tx.send(Message::Txn(test_txn)).unwrap();
+                    }
                 }
             }
             Err(RecvError::Closed) => break,
