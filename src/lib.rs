@@ -117,7 +117,7 @@ impl Node {
     pub fn run(mut self) -> impl Stream<Item = Message> {
         stream! {
             let next_block_sampler = Uniform::new(Duration::from_secs(5), Duration::from_secs(10));
-            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_secs(1));
+            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_millis(100));
 
             // block_timer represents how long it takes to compute a proof of work for our block.
             let block_timer = tokio::time::sleep(thread_rng().sample(next_block_sampler));
@@ -175,10 +175,10 @@ fn count_txns(chain: &Blockchain) -> usize {
     chain.iter().map(|block| block.txns.len()).sum()
 }
 
-pub async fn run_net(buf_size: usize, n: usize) {
-    let (tx, mut rx) = tokio::sync::broadcast::channel::<Message>(buf_size);
+pub async fn run_net(num_nodes: usize, broadcast_retention_length: usize) {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<Message>(broadcast_retention_length);
 
-    for _ in 0..n {
+    for _ in 0..num_nodes {
         let tx = tx.clone();
         let mut stream = Box::pin(Node::new(tx.subscribe()).run());
         tokio::spawn(async move {
@@ -211,7 +211,7 @@ pub async fn run_net(buf_size: usize, n: usize) {
                     txns_submitted = new_txns_submitted;
 
                     println!(
-                        "{:x?}",
+                        "chain: {:x?} ...",
                         chain_as_hashes(&longest_chain).take(8).collect::<Vec<_>>()
                     );
                     println!(
