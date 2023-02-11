@@ -34,6 +34,19 @@ pub struct Block {
 /// Though this is not really applicable to a real distributed blockchain.
 pub type Blockchain = ListSync<Block>;
 
+pub fn validate_chain(chain: &Blockchain) -> bool {
+    let mut set: IntSet<u64> = Default::default();
+    for block in chain {
+        if set.intersection(&block.txns).next().is_some() {
+            return false;
+        }
+
+        set.extend(&block.txns);
+    }
+
+    true
+}
+
 pub struct Node {
     pub rx: broadcast::Receiver<Message>,
     pub txn_pool: IntSet<u64>,
@@ -49,16 +62,6 @@ impl Node {
         }
     }
 
-    pub fn check_txns(&self, txns: &IntSet<u64>) -> bool {
-        for block in &self.current_block {
-            if !txns.is_disjoint(&block.txns) {
-                return false;
-            }
-        }
-
-        true
-    }
-
     pub fn check_txn(&self, txn: u64) -> bool {
         for block in &self.current_block {
             if block.txns.contains(&txn) {
@@ -71,26 +74,54 @@ impl Node {
 }
 
 impl Node {
+    pub fn rollup_block(&mut self) {
+        // add a new transaction to the pool that represents our reward for the block
+        self.txn_pool
+            .insert(TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+
+        // create a new block with all of the transactions in our pool
+        self.current_block.push_front_mut(Block {
+            txns: std::mem::take(&mut self.txn_pool),
+        });
+    }
+
+    // Returns true if the new block was accepted, false otherwise.
+    pub fn recv_block(&mut self, block: Blockchain) -> bool {
+        // Accept this block only if the chain is longer
+        // and if
+        let cond = block.len() > self.current_block.len() && validate_chain(&block);
+        if cond {
+            // A longer chain has been received.
+            // Abandon the current block and start with the new one.
+            self.current_block = block;
+
+            // Remove any transactions from the new chain from our transaction pool.
+            for block in self.current_block.iter() {
+                self.txn_pool.retain(|txn| block.txns.contains(txn));
+            }
+        }
+
+        cond
+    }
+
     pub fn run(mut self) -> impl Stream<Item = Message> {
         stream! {
-            let next_block_sampler = Uniform::new(Duration::ZERO, Duration::from_secs(30));
-            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_millis(10));
+            let next_block_sampler = Uniform::new(Duration::from_secs(5), Duration::from_secs(10));
+            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_secs(1));
 
+            // block_timer represents how long it takes to compute a proof of work for our block.
             let block_timer = tokio::time::sleep(thread_rng().sample(next_block_sampler));
             tokio::pin!(block_timer);
 
+            // txn_timer represents how often we initiate transactions on the chain.
             let txn_timer = tokio::time::sleep(thread_rng().sample(next_txn_sampler));
             tokio::pin!(txn_timer);
 
             loop {
                 tokio::select! {
-                    // Sleeping has completed and a block is ready. Publish the block.
                     _ = block_timer.as_mut() => {
-                        // add a new transaction to the pool that represents our reward for the block
-                        self.txn_pool.insert(TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
-                        self.current_block.push_front_mut(Block {
-                            txns: std::mem::replace(&mut self.txn_pool, Default::default())
-                        });
+                        // Sleeping has completed and a block is ready. Publish the block.
+                        self.rollup_block();
                         block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
                         yield Message::Block(self.current_block.clone());
                     },
@@ -101,10 +132,7 @@ impl Node {
                     msg = self.rx.recv() => match msg {
                         // We received a message.
                         Ok(Message::Block(block)) => {
-                            if block.len() > self.current_block.len() && block.first().map_or(true, |blk| self.check_txns(&blk.txns)) {
-                                // A longer chain has been received.
-                                // Abandon the current block and start with the new one.
-                                self.current_block = block;
+                            if self.recv_block(block) {
                                 block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
                             }
                         },
@@ -113,8 +141,8 @@ impl Node {
                                 yield Message::Txn(id);
                             }
                         }
-                        // The channel was closed for some reason.
                         Err(RecvError::Lagged(_)) => continue,
+                        // The channel was closed for some reason.
                         Err(RecvError::Closed) => break,
                     },
                 }
@@ -159,17 +187,18 @@ pub async fn run_net(buf_size: usize, n: usize) {
                 if blk.len() > longest_chain.len() {
                     longest_chain = blk.clone();
 
-                    let new_txns_recorded = count_txns(&longest_chain);
+                    let new_txns_recorded = count_txns(&longest_chain) as isize;
                     let txns_recorded_since = new_txns_recorded - txns_recorded;
                     txns_recorded = new_txns_recorded;
 
-                    let new_txns_submitted = TXN_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+                    let new_txns_submitted =
+                        TXN_COUNTER.load(std::sync::atomic::Ordering::Relaxed) as isize;
                     let txns_submitted_since = new_txns_submitted - txns_submitted;
                     txns_submitted = new_txns_submitted;
 
                     println!(
                         "{:x?}",
-                        chain_as_hashes(&longest_chain).take(5).collect::<Vec<_>>()
+                        chain_as_hashes(&longest_chain).take(8).collect::<Vec<_>>()
                     );
                     println!(
                         "{} txns in current block, {} new txns on chain, {} new txns submitted",
