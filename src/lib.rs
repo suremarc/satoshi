@@ -86,12 +86,10 @@ impl Node {
 }
 
 pub async fn run_net(buf_size: usize, n: usize) {
-    let (txs, nodes): (Vec<_>, Vec<_>) = (0..n)
+    let (txs, mut nodes): (Vec<_>, Vec<_>) = (0..n)
         .map(|_| mpsc::channel::<Message>(buf_size))
         .map(|(tx, rx)| (tx, Node::new(rx)))
         .unzip();
-
-    let mut nodes = nodes.into_boxed_slice();
 
     let streams: Box<[_]> = nodes.iter_mut().map(Node::run).collect();
     tokio::pin!(streams);
