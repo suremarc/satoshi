@@ -1,10 +1,24 @@
 # satoshi
 
-This is a simulation of proof-of-work consensus as described in the [Bitcoin whitepaper](https://bitcoin.org/bitcoin.pdf). No effort is given to simulating bad actors, incentive mechanism, or real currency for that matter. We are assuming almost ideal conditions, where every node is honest and the network topology is strongly connected. Messages can certainly be dropped; however, since we simulate a gossip protocol, it's very unlikely for messages not to spread widely.
+This is a simulation of proof-of-work consensus as described in the [Bitcoin whitepaper](https://bitcoin.org/bitcoin.pdf). No effort is given to simulating bad actors, incentive mechanism, or real currency for that matter. We are assuming almost ideal conditions, where every node is honest and the network topology is strongly connected.
 
-## How to run
+## Usage
 
-Simply just do `cargo run --release`. That's it. More command-line parameters will come eventually.
+The quickest way to get started is to clone this repo and run `cargo run --release` in the root directory.
+
+```shell
+Options:
+  -n, --num-nodes <NUM_NODES>
+          How many nodes to simulate [default: 100]
+      --target-block-period-secs <TARGET_BLOCK_PERIOD_SECS>
+          [default: 1.0]
+      --target-txns-per-second <TARGET_TXNS_PER_SECOND>
+          [default: 2000]
+      --retention <RETENTION>
+          How many messages to retain [default: 1000000]
+  -h, --help
+          Print help
+```
 
 ## Interpreting the output
 
