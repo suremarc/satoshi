@@ -58,9 +58,7 @@ pub async fn main() {
     let mut longest_chain = Blockchain::new_sync();
     let mut txns_recorded = 0;
     let mut txns_submitted = 0;
-    let mut test_txn = TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let mut test_txn_t_broadcasted = Instant::now();
-    tx.send(Message::Txn(test_txn)).unwrap();
+    let mut t_last_block = Instant::now();
 
     loop {
         match rx.recv().await {
@@ -89,17 +87,12 @@ pub async fn main() {
                         txns_submitted_since,
                     );
 
-                    if chain_contains(&longest_chain, test_txn) {
-                        println!(
-                            "transaction latency: {} ms",
-                            Instant::now()
-                                .duration_since(test_txn_t_broadcasted)
-                                .as_millis()
-                        );
-                        test_txn = TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        test_txn_t_broadcasted = Instant::now();
-                        tx.send(Message::Txn(test_txn)).unwrap();
-                    }
+                    let t_now = Instant::now();
+                    println!(
+                        "period: {} ms",
+                        t_now.duration_since(t_last_block).as_millis()
+                    );
+                    t_last_block = t_now;
                 }
             }
             Err(RecvError::Closed) => break,

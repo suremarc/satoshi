@@ -26,17 +26,17 @@ This program repeatedly prints three things:
 
 * Most recent 4 hashes on the chain
 * Statistics on number of transactions since last block
-* Transaction latency (only is printed once data is available)
+* Time since last block
 
 The output looks like this:
 
 ```
 chain: [613a7e8cd6c0df3d, b79cf6d529f4bad5, 60ee39bc0dfb041c, bfe6dbc39dc71ef7] ...
 56 blocks total, 181 txns in current block, 181 new txns on chain, 260 new txns submitted
-transaction latency: 4184 ms
+period: 4184 ms
 chain: [b6c973cb7ab8fe39, 613a7e8cd6c0df3d, b79cf6d529f4bad5, 60ee39bc0dfb041c] ...
 57 blocks total, 229 txns in current block, 229 new txns on chain, 323 new txns submitted
-transaction latency: 5173 ms
+period: 5173 ms
 ```
 
 In this case, a new block was appended to the existing chain. Sometimes blocks end up being rolled back, though. For example:
@@ -44,10 +44,10 @@ In this case, a new block was appended to the existing chain. Sometimes blocks e
 ```
 chain: [e2875117dc1a188a, a3cf940b7562e6c, a4c103b81c4c26ec, e698059b8e55cca] ...
 67 blocks total, 3 txns in current block, 3 new txns on chain, 266 new txns submitted
-transaction latency: 5982 ms
+period: 5982 ms
 chain: [1afb7a7d8f56c713, 4394ae71a036b1cb, a3cf940b7562e6c, a4c103b81c4c26ec] ...
 68 blocks total, 280 txns in current block, 491 new txns on chain, 300 new txns submitted
-transaction latency: 6229 ms
+period: 6229 ms
 ```
 
 `e2875117dc1a188a` disappeared because a longer chain appeared with different blocks. `a3cf940b7562e6c` persisted, however.
