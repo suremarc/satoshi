@@ -23,7 +23,7 @@ pub struct Args {
     pub target_txns_per_second: u64,
 
     /// How many messages to retain
-    #[clap(long, default_value = "1000000", value_parser)]
+    #[clap(long, default_value = "1000", value_parser)]
     pub retention: usize,
 }
 

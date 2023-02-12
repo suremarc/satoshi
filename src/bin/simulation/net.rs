@@ -144,8 +144,10 @@ impl Node {
                         },
                         Ok(Message::Txn(id)) => {
                             // Check if the transaction already exists (avoid double-spending).
-                            if !chain_contains(&self.current_block, id) {
-                                self.txn_pool.insert(id);
+                            if !chain_contains(&self.current_block, id) && self.txn_pool.insert(id) {
+                                // We technically don't need to re-broadcast this message (aka gossiping)
+                                // but it will introduce more realism by messing up ordering and uniqueness.
+                                yield Message::Txn(id)
                             }
                         }
                         Err(RecvError::Lagged(_)) => continue,
