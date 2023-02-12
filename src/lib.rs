@@ -7,6 +7,7 @@ use std::{
 use async_stream::stream;
 use nohash_hasher::IntSet;
 use rand::{distributions::Uniform, thread_rng, Rng};
+use rand_distr::Exp;
 use rpds::ListSync;
 use tokio::{
     sync::broadcast::{self, error::RecvError},
@@ -57,21 +58,13 @@ pub fn chain_contains(chain: &Blockchain, txn: u64) -> bool {
     false
 }
 
+#[derive(Default, Debug)]
 pub struct Node {
-    pub rx: broadcast::Receiver<Message>,
     pub txn_pool: IntSet<u64>,
     pub current_block: Blockchain,
 }
 
 impl Node {
-    pub fn new(rx: broadcast::Receiver<Message>) -> Self {
-        Self {
-            rx,
-            txn_pool: Default::default(),
-            current_block: Default::default(),
-        }
-    }
-
     pub fn check_txn(&self, txn: u64) -> bool {
         for block in &self.current_block {
             if block.txns.contains(&txn) {
@@ -114,13 +107,14 @@ impl Node {
         cond
     }
 
-    pub fn run(mut self) -> impl Stream<Item = Message> {
+    pub fn run(mut self, mut rx: broadcast::Receiver<Message>) -> impl Stream<Item = Message> {
         stream! {
-            let next_block_sampler = Uniform::new(Duration::from_secs(5), Duration::from_secs(10));
-            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_millis(100));
+            // The exponential distribution best captures the memorylessness of the proof-of-work computation.
+            let next_block_sampler = Exp::new(1./10.).unwrap(); // frequency is 1 block / 10 seconds
+            let next_txn_sampler = Uniform::new(Duration::ZERO, Duration::from_millis(1000));
 
             // block_timer represents how long it takes to compute a proof of work for our block.
-            let block_timer = tokio::time::sleep(thread_rng().sample(next_block_sampler));
+            let block_timer = tokio::time::sleep(Duration::try_from_secs_f32(thread_rng().sample(next_block_sampler)).unwrap());
             tokio::pin!(block_timer);
 
             // txn_timer represents how often we initiate transactions on the chain.
@@ -132,18 +126,18 @@ impl Node {
                     _ = block_timer.as_mut() => {
                         // Sleeping has completed and a block is ready. Publish the block.
                         self.rollup_block();
-                        block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
+                        block_timer.as_mut().reset(Instant::now() + Duration::try_from_secs_f32(thread_rng().sample(next_block_sampler)).unwrap());
                         yield Message::Block(self.current_block.clone());
                     },
                     _ = txn_timer.as_mut() => {
                         txn_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_txn_sampler));
                         yield Message::Txn(TXN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     },
-                    msg = self.rx.recv() => match msg {
+                    msg = rx.recv() => match msg {
                         // We received a message.
                         Ok(Message::Block(block)) => {
                             if self.recv_block(block) {
-                                block_timer.as_mut().reset(Instant::now() + thread_rng().sample(next_block_sampler));
+                                block_timer.as_mut().reset(Instant::now() + Duration::try_from_secs_f32(thread_rng().sample(next_block_sampler)).unwrap());
                             }
                         },
                         Ok(Message::Txn(id)) => {
@@ -180,7 +174,7 @@ pub async fn run_net(num_nodes: usize, broadcast_retention_length: usize) {
 
     for _ in 0..num_nodes {
         let tx = tx.clone();
-        let mut stream = Box::pin(Node::new(tx.subscribe()).run());
+        let mut stream = Box::pin(<Node as Default>::default().run(tx.subscribe()));
         tokio::spawn(async move {
             while let Some(msg) = stream.next().await {
                 tx.send(msg).unwrap();
@@ -215,7 +209,8 @@ pub async fn run_net(num_nodes: usize, broadcast_retention_length: usize) {
                         chain_as_hashes(&longest_chain).take(8).collect::<Vec<_>>()
                     );
                     println!(
-                        "{} txns in current block, {} new txns on chain, {} new txns submitted",
+                        "{} blocks total, {} txns in current block, {} new txns on chain, {} new txns submitted",
+                        longest_chain.len(),
                         longest_chain.first().unwrap().txns.len(),
                         txns_recorded_since,
                         txns_submitted_since,
