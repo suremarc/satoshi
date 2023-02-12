@@ -71,7 +71,7 @@ pub struct Node {
 pub enum Message {
     /// Announcing a new block on the chain.
     Block(Blockchain),
-    /// Announcing a new transaction, or gossiping a transaction sent from another node.
+    /// Announcing a new transaction.
     Txn(u64),
 }
 
