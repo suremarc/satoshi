@@ -10,27 +10,27 @@ Simply just do `cargo run --release`. That's it. More command-line parameters wi
 
 This program repeatedly prints three things:
 
-* Most recent 8 hashes on the chain
+* Most recent 4 hashes on the chain
 * Statistics on number of transactions since last block
-* Transaction latency (pretty much always equal to time between blocks)
+* Transaction latency (only is printed once data is available)
 
 The output looks like this:
 
 ```
 chain: [2d666b73ece1f692, fad7a37ce726af8f, c2763ec2cf95e335, 9326b5182e580159] ...
 163 blocks, 88 txns in current block, 88 new txns on chain, 100 new txns submitted
-transaction latency: 8 seconds
+transaction latency: 8787 ms
 chain: [e8baab0df0d718c0, 2d666b73ece1f692, fad7a37ce726af8f, c2763ec2cf95e335] ...
 164 73 txns in current block, 73 new txns on chain, 90 new txns submitted
-transaction latency: 19 seconds
+transaction latency: 19145 ms
 ```
 
-(Note that we abbreviated the chain to 4 elements for the sake of brevity.) In this case, a new block was appended to the existing chain. Sometimes blocks end up being rolled back, though. For example:
+In this case, a new block was appended to the existing chain. Sometimes blocks end up being rolled back, though. For example:
 
 ```
 chain: [64bf1932405df122, 6f012683f35bd24b, 2765ad17bdc3cd8c, a4ee56de2cdc56ea] ...
 108 blocks, 93 txns in current block, 93 new txns on chain, 100 new txns submitted
-transaction latency: 16 seconds
+transaction latency: 16480 ms
 chain: [4216e912495fd300, b0077c0556ae4eb4, 8d87101c8573b22f, 2765ad17bdc3cd8c] ...
 109 blocks, 130 txns in current block, 129 new txns on chain, 174 new txns submitted
 ```
