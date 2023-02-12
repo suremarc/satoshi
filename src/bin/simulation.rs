@@ -15,14 +15,13 @@ use tokio::{
 };
 use tokio_stream::{Stream, StreamExt};
 
+// Used for generating unique ID's for transactions.
+// Could just as easily be done using UUID's, but
+// this also gives us the magical ability to know
+// how many transactions have been submitted in total.
 static TXN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone)]
-pub enum Message {
-    Block(Blockchain),
-    Txn(u64),
-}
-
+// A block on the chain.
 // TODO: actually add real currency to the chain
 #[derive(Debug, Clone)]
 pub struct Block {
@@ -35,6 +34,7 @@ pub struct Block {
 /// Though this is not really applicable to a real distributed blockchain.
 pub type Blockchain = ListSync<Block>;
 
+// Check if this chain is valid -- in this case, meaning it has no double-spent transactions.
 pub fn validate_chain(chain: &Blockchain) -> bool {
     let mut set: IntSet<u64> = Default::default();
     for block in chain {
@@ -48,6 +48,7 @@ pub fn validate_chain(chain: &Blockchain) -> bool {
     true
 }
 
+// Check if this chain has the given transaction.
 pub fn chain_contains(chain: &Blockchain, txn: u64) -> bool {
     for block in chain {
         if block.txns.contains(&txn) {
@@ -58,25 +59,25 @@ pub fn chain_contains(chain: &Blockchain, txn: u64) -> bool {
     false
 }
 
+// A machine participating in the blockchain network.
 #[derive(Default, Debug)]
 pub struct Node {
     pub txn_pool: IntSet<u64>,
     pub current_block: Blockchain,
 }
 
-impl Node {
-    pub fn check_txn(&self, txn: u64) -> bool {
-        for block in &self.current_block {
-            if block.txns.contains(&txn) {
-                return false;
-            }
-        }
-
-        true
-    }
+// A message that can be broadcast by a node.
+#[derive(Debug, Clone)]
+pub enum Message {
+    // Announcing a new block on the chain.
+    Block(Blockchain),
+    // Announcing a new transaction, or gossiping a transaction sent from another node.
+    Txn(u64),
 }
 
 impl Node {
+    // Rollup all of the transactions currently in the pool into a new block,
+    // and append that block to the current chain.
     pub fn rollup_block(&mut self) {
         // add a new transaction to the pool that represents our reward for the block
         self.txn_pool
@@ -107,7 +108,11 @@ impl Node {
         cond
     }
 
-    pub fn run(mut self, mut rx: broadcast::Receiver<Message>) -> impl Stream<Item = Message> {
+    // Returns a stream of messages produced by this node.
+    pub fn into_producer(
+        mut self,
+        mut rx: broadcast::Receiver<Message>,
+    ) -> impl Stream<Item = Message> {
         stream! {
             // The exponential distribution best captures the memorylessness of the proof-of-work computation.
             let next_block_sampler = Exp::new(1./10.).unwrap(); // frequency is 1 block / 10 seconds
@@ -141,7 +146,10 @@ impl Node {
                             }
                         },
                         Ok(Message::Txn(id)) => {
-                            if self.check_txn(id) && self.txn_pool.insert(id) {
+                            // Check if the transaction already exists (avoid double-spending)
+                            // and make sure we haven't already received it before.
+                            if !chain_contains(&self.current_block, id) && self.txn_pool.insert(id) {
+                                // Re-broadcast this transaction.
                                 yield Message::Txn(id);
                             }
                         }
@@ -155,6 +163,7 @@ impl Node {
     }
 }
 
+// Represent this chain as a list of hashes, mostly for debugging purposes.
 fn chain_as_hashes(chain: &Blockchain) -> impl Iterator<Item = u64> + '_ {
     chain.iter().map(|block| {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -169,12 +178,21 @@ fn count_txns(chain: &Blockchain) -> usize {
     chain.iter().map(|block| block.txns.len()).sum()
 }
 
-pub async fn run_net(num_nodes: usize, broadcast_retention_length: usize) {
-    let (tx, mut rx) = tokio::sync::broadcast::channel::<Message>(broadcast_retention_length);
+// Number of nodes in the simulation
+const NUM_NODES: usize = 1000;
+// How long of a history to retain before dropping messages.
+// If a node lags more than 1 million messages behind, they will
+// not receive some transactions.
+const RETENTION_LENGTH: usize = 1_000_000;
 
-    for _ in 0..num_nodes {
+#[tokio::main]
+pub async fn main() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<Message>(RETENTION_LENGTH);
+
+    for _ in 0..NUM_NODES {
         let tx = tx.clone();
-        let mut stream = Box::pin(<Node as Default>::default().run(tx.subscribe()));
+        let node = <Node as Default>::default();
+        let mut stream = Box::pin(node.into_producer(tx.subscribe()));
         tokio::spawn(async move {
             while let Some(msg) = stream.next().await {
                 tx.send(msg).unwrap();
