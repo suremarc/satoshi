@@ -18,10 +18,10 @@ The output looks like this:
 
 ```
 chain: [2d666b73ece1f692, fad7a37ce726af8f, c2763ec2cf95e335, 9326b5182e580159] ...
-88 txns in current block, 88 new txns on chain, 100 new txns submitted
+163 blocks, 88 txns in current block, 88 new txns on chain, 100 new txns submitted
 transaction latency: 8 seconds
 chain: [e8baab0df0d718c0, 2d666b73ece1f692, fad7a37ce726af8f, c2763ec2cf95e335] ...
-73 txns in current block, 73 new txns on chain, 90 new txns submitted
+164 73 txns in current block, 73 new txns on chain, 90 new txns submitted
 transaction latency: 19 seconds
 ```
 
@@ -29,10 +29,10 @@ transaction latency: 19 seconds
 
 ```
 chain: [64bf1932405df122, 6f012683f35bd24b, 2765ad17bdc3cd8c, a4ee56de2cdc56ea] ...
-93 txns in current block, 93 new txns on chain, 100 new txns submitted
+108 blocks, 93 txns in current block, 93 new txns on chain, 100 new txns submitted
 transaction latency: 16 seconds
 chain: [4216e912495fd300, b0077c0556ae4eb4, 8d87101c8573b22f, 2765ad17bdc3cd8c] ...
-130 txns in current block, 129 new txns on chain, 174 new txns submitted
+109 blocks, 130 txns in current block, 129 new txns on chain, 174 new txns submitted
 ```
 
 `64bf1932405df122` and `6f012683f35bd24b` both disappeared because a longer chain appeared with different blocks. `2765ad17bdc3cd8c` persisted, however.
