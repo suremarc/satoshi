@@ -31,22 +31,23 @@ This program repeatedly prints three things:
 The output looks like this:
 
 ```
-chain: [2d666b73ece1f692, fad7a37ce726af8f, c2763ec2cf95e335, 9326b5182e580159] ...
-163 blocks, 88 txns in current block, 88 new txns on chain, 100 new txns submitted
-transaction latency: 8787 ms
-chain: [e8baab0df0d718c0, 2d666b73ece1f692, fad7a37ce726af8f, c2763ec2cf95e335] ...
-164 73 txns in current block, 73 new txns on chain, 90 new txns submitted
-transaction latency: 19145 ms
+chain: [613a7e8cd6c0df3d, b79cf6d529f4bad5, 60ee39bc0dfb041c, bfe6dbc39dc71ef7] ...
+56 blocks total, 181 txns in current block, 181 new txns on chain, 260 new txns submitted
+transaction latency: 4184 ms
+chain: [b6c973cb7ab8fe39, 613a7e8cd6c0df3d, b79cf6d529f4bad5, 60ee39bc0dfb041c] ...
+57 blocks total, 229 txns in current block, 229 new txns on chain, 323 new txns submitted
+transaction latency: 5173 ms
 ```
 
 In this case, a new block was appended to the existing chain. Sometimes blocks end up being rolled back, though. For example:
 
 ```
-chain: [64bf1932405df122, 6f012683f35bd24b, 2765ad17bdc3cd8c, a4ee56de2cdc56ea] ...
-108 blocks, 93 txns in current block, 93 new txns on chain, 100 new txns submitted
-transaction latency: 16480 ms
-chain: [4216e912495fd300, b0077c0556ae4eb4, 8d87101c8573b22f, 2765ad17bdc3cd8c] ...
-109 blocks, 130 txns in current block, 129 new txns on chain, 174 new txns submitted
+chain: [e2875117dc1a188a, a3cf940b7562e6c, a4c103b81c4c26ec, e698059b8e55cca] ...
+67 blocks total, 3 txns in current block, 3 new txns on chain, 266 new txns submitted
+transaction latency: 5982 ms
+chain: [1afb7a7d8f56c713, 4394ae71a036b1cb, a3cf940b7562e6c, a4c103b81c4c26ec] ...
+68 blocks total, 280 txns in current block, 491 new txns on chain, 300 new txns submitted
+transaction latency: 6229 ms
 ```
 
-`64bf1932405df122` and `6f012683f35bd24b` both disappeared because a longer chain appeared with different blocks. `2765ad17bdc3cd8c` persisted, however.
+`e2875117dc1a188a` disappeared because a longer chain appeared with different blocks. `a3cf940b7562e6c` persisted, however.
